@@ -1,0 +1,178 @@
+homeassistant:
+  customize:
+    sensor.pressure_weather_forecast:
+      friendly_name: Барометрический прогноз
+
+    sensor.pressure_change_in_3_hours:
+      friendly_name: Барометрическая тенденция
+
+    sensor.pressure_change_in_6_hours:
+      friendly_name: Барометрическая тенденция
+
+# Barometric forecast
+sensor:
+  # Pressure Changes 3 Hour
+  - platform: statistics
+    entity_id: sensor.pressure_outside
+    name: pressure_change_in_3_hours_stat
+    max_age:
+      hours: 3
+    sampling_size: 10800
+    state_characteristic: change
+    unique_id: pressure_change_in_3_hours_stat
+
+  - platform: template
+    sensors:
+      pressure_change_in_3_hours:
+        unit_of_measurement: "hPa"
+        device_class: atmospheric_pressure
+        value_template: >-
+          {{ ((states('sensor.pressure_change_in_3_hours_stat') | float(0)) * 1.33322) | round(2) }}
+        availability_template: >-
+          {{ states('sensor.pressure_change_in_3_hours_stat') | is_number }}
+
+  # Pressure Changes 6 Hour
+  - platform: statistics
+    entity_id: sensor.pressure_outside
+    name: pressure_change_in_6_hours_stat
+    max_age:
+      hours: 6
+    sampling_size: 21600
+    state_characteristic: change
+    unique_id: pressure_change_in_6_hours_stat
+
+  - platform: template
+    sensors:
+      pressure_change_in_6_hours:
+        unit_of_measurement: "hPa"
+        device_class: atmospheric_pressure
+        value_template: >-
+          {#{ ((state_attr('sensor.pressure_change_in_6_hours_stat', 'change') | float(0)) * 1.33322) | round(2) }#}
+          {{ ((states('sensor.pressure_change_in_6_hours_stat') | float(0)) * 1.33322) | round(2) }}
+        availability_template: >-
+          {#{ state_attr('sensor.pressure_change_in_6_hours_stat', 'change') | is_number }#}
+          {{ states('sensor.pressure_change_in_6_hours_stat') | is_number }}
+
+template:
+  # 0 Rising Very Rapidly = 3 hPa change or more per hour.
+  # 1 Rising Rapidly = 1.4 hPa change or more per hour.
+  # 2 Rising Slowly = 0.7 to less than 1.4 hPa change per hour.
+  # 3 Normal (Steady) = Between 0.7 and -0.7 hPa change per hour.
+  # 4 Falling Slowly = -0.7 up to -1.4 hPa change per hour.
+  # 5 Falling Rapidly = -1.4 hPa change or more per hour.
+  # 6 Falling Very Rapidly = -3 hPa change or more per hour.
+  - trigger:
+      - platform: state
+        entity_id: sensor.pressure_change_in_3_hours
+        for: "00:00:30"
+      - platform: state
+        entity_id: sensor.pressure_outside
+        for: "00:00:30"
+      - platform: state
+        entity_id: sensor.temperature_outside
+        for: "00:00:30"
+      - platform: event
+        event_type: event_template_reloaded
+    sensor:
+      - name: Pressure Weather Forecast
+        state: >-
+          {%- set diff = states('sensor.pressure_change_in_3_hours') | float(0) -%}
+          {%- set press = states('sensor.pressure_outside') | float(0) -%}
+          {% if press == 0.0 %}
+            Неизвестно
+          {% elif press > 1022.689 %}
+            {% if diff <= -1.4 %}
+              Пасмурно
+            {% else %}
+              Ясно
+            {% endif %}
+          {% elif press < 1009.144 %}
+            {% if diff <= -5 %}
+              Шторм
+            {% elif diff <= -0.7 %}
+              {% if states('sensor.temperature_outside') | float(99) < -5 %}
+                Снег
+              {% elif states('sensor.temperature_outside') | float(99) < 0 %}
+                Снег с дождем
+              {% else %}
+                Осадки
+              {% endif %}
+            {% else %}
+              {% if states('sensor.temperature_outside') | float(99) < -10 %}
+                Ясно, очень холодно
+              {% elif states('sensor.temperature_outside') | float(99) < 5 %}
+                Ясно, холодно
+              {% elif states('sensor.temperature_outside') | float(99) < 18 %}
+                Ясно, прохладно
+              {% else %}
+                Ясно
+              {% endif %}
+            {% endif %}
+          {% else %}
+            {% if diff <= -1.4 %}
+              {% if states('sensor.temperature_outside') | float(99) < -5 %}
+                Снег
+              {% elif states('sensor.temperature_outside') | float(99) < 0 %}
+                Снег с дождем
+              {% else %}
+                Осадки
+              {% endif %}
+            {% elif diff <= -0.7 %}
+              Пасмурно
+            {% else %}
+              Без перемен
+            {% endif %}
+          {% endif %}
+        icon: >-
+          {%- set diff = states('sensor.pressure_change_in_3_hours') | float(0) -%}
+          {%- set press = states('sensor.pressure_outside') | float(0) -%}
+          {%- if press == 0.0 -%}
+            mdi:blur
+          {%- elif press > 1022.689 -%}
+            {%- if diff <= -1.4 -%}
+              mdi:weather-partly-cloudy
+            {%- else -%}
+              mdi:weather-sunny
+            {%- endif -%}
+          {%- elif press < 1009.144 -%}
+            {%- if diff <= -5 -%}
+              mdi:weather-tornado
+            {%- elif diff <= -0.7 -%}
+              {% if states('sensor.temperature_outside') | float(99) < -5 %}
+                mdi:weather-snowy
+              {% elif states('sensor.temperature_outside') | float(99) < 0 %}
+                mdi:weather-snowy-rainy
+              {% else %}
+                mdi:weather-pouring
+              {% endif %}
+            {%- else -%}
+              {% if states('sensor.temperature_outside') | float(99) < -10 %}
+                mdi:thermometer-alert
+              {% elif states('sensor.temperature_outside') | float(99) < 5 %}
+                mdi:thermometer-low
+              {% elif states('sensor.temperature_outside') | float(99) < 18 %}
+                mdi:weather-sunny
+              {% else %}
+                mdi:weather-sunny
+              {% endif %}
+            {%- endif -%}
+          {%- else -%}
+            {%- if diff <= -1.4 -%}
+              {% if states('sensor.temperature_outside') | float(99) < -5 %}
+                mdi:weather-snowy
+              {% elif states('sensor.temperature_outside') | float(99) < 0 %}
+                mdi:weather-snowy-rainy
+              {% else %}
+                mdi:weather-pouring
+              {% endif %}
+            {%- elif diff <= -0.7 -%}
+              mdi:weather-partly-cloudy
+            {%- else -%}
+              mdi:ship-wheel
+            {%- endif -%}
+          {%- endif -%}
+        availability: >-
+          {{ 
+            states('sensor.pressure_change_in_3_hours') | is_number and 
+            states('sensor.pressure_outside') | is_number 
+          }}

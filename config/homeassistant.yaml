@@ -1,0 +1,9 @@
+auth_providers:
+  - type: trusted_networks
+    trusted_networks:
+      - !secret home_user_net
+      - !secret home_proxy
+  - type: homeassistant
+packages: !include_dir_named packages
+allowlist_external_dirs:
+  - /config

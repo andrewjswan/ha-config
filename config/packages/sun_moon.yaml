@@ -1,0 +1,246 @@
+homeassistant:
+  customize:
+    sensor.moon:
+      friendly_name: Фаза луны
+    sun.sun:
+      friendly_name: Солнце
+
+template:
+  - binary_sensor:
+      - name: "Night"
+        unique_id: night
+        state: >-
+          {{ states('sensor.solar_angle') | float(0) < -3 }}
+        availability: >- 
+          {{ states('sensor.solar_angle') | is_number }}
+        icon: >-
+          {% if is_state('binary_sensor.night','on') %}
+            mdi:weather-night
+          {% else %}
+            mdi:white-balance-sunny
+          {% endif %}
+
+sensor:
+  # Sun
+  - platform: template
+    sensors:
+      # Sun - Next Sunrise
+      nextsunrise:
+        friendly_name: 'Next Sunrise'
+        value_template: >
+          {{ as_timestamp(state_attr('sun.sun', 'next_rising'), none) | timestamp_custom('%H:%M') }}
+        availability_template: >
+          {{ as_timestamp(state_attr('sun.sun', 'next_rising'), none) | is_number }}
+        icon_template: mdi:weather-sunset-up
+        unique_id: next_sunrise
+
+      # Sun - Next Sunset
+      nextsunset:
+        friendly_name: 'Next Sunset'
+        value_template: >
+          {{ as_timestamp(state_attr('sun.sun', 'next_setting'), none) | timestamp_custom('%H:%M') }}
+        availability_template: >
+          {{ as_timestamp(state_attr('sun.sun', 'next_setting'), none) | is_number }}
+        icon_template: mdi:weather-sunset-down
+        unique_id: next_sunset
+
+      # Sun - Sun Hours
+      sunhours:
+        friendly_name: 'Sun hours'
+        value_template: >-
+          {% set nrise = as_timestamp(state_attr('sun.sun', 'next_rising'), none) %}
+          {% set nset = as_timestamp(state_attr('sun.sun', 'next_setting'), none) %}
+          {% if nrise > nset %}
+            {% set nrise = nrise - 60 * 60 * 24 %}
+          {% endif %}
+          {{ (nset - nrise) | timestamp_custom('%H:%M', false) }}
+        availability_template: >
+          {{ as_timestamp(state_attr('sun.sun', 'next_rising'), none) | is_number and as_timestamp(state_attr('sun.sun', 'next_setting'), none) | is_number }}
+        icon_template: mdi:weather-sunny 
+        unique_id: sun_hours
+
+      # Sun - Sun Minutes
+      sunminutes:
+        friendly_name: 'Sun Mins'
+        value_template: >-
+          {{ ((states('sensor.sunhours').split(':')[0]|int(0) * 60) ~ (states('sensor.sunhours').split(':')[1] | int(0))) if states('sensor.sunhours').split(':') | count > 1 }}
+        availability_template: >
+          {{ states('sensor.sunhours').split(':') | count > 1 }}
+        icon_template: mdi:weather-sunny  
+        unit_of_measurement: "мин"
+        unique_id: sun_minutes
+
+      # Sun - Sun Hours for Gauge
+      sun_hours:
+        friendly_name: 'Sun Day Hours'
+        value_template: >-
+          {{ states('sensor.sunhours') | replace(":", ".") | float(0) }}
+        availability_template: >
+          {{ states('sensor.sunhours').split(':') | count > 1 }}
+        icon_template: mdi:weather-sunny  
+        unit_of_measurement: "чч:мм"
+        unique_id: sun_day_hours
+
+      # Sun - Angle
+      solar_angle:
+        friendly_name: "Sun elevation"
+        value_template: >
+          {{ state_attr('sun.sun', 'elevation') }}
+        availability_template: >
+          {{ state_attr('sun.sun', 'elevation') | is_number }}
+        icon_template: mdi:angle-acute
+        unit_of_measurement: '°'
+        unique_id: solar_angle
+
+      # Sun - Azimuth
+      sunazimuth:
+        friendly_name: 'Sun azimuth'
+        value_template: >
+          {{ state_attr('sun.sun', 'azimuth') | int(0) }}
+        availability_template: >
+          {{ state_attr('sun.sun', 'azimuth') | is_number }}
+        icon_template: mdi:angle-acute
+        unit_of_measurement: '°' 
+        unique_id: sun_azimuth
+
+  # Moon
+#  - platform: moon
+
+  # Sunlight Illuminance Lux
+  - platform: template
+    sensors:
+      solar_lux:
+        friendly_name: "Солнце (Яркость)"
+        icon_template: mdi:white-balance-sunny
+        value_template: >-
+          {# 120000 - Direct sunlight                                   #}
+          {# Min angle - end of twilight - -06                          #}
+          {# Max angle - noon sun elevation - 90                        #}
+          {# Transform - ((Angle - Min) / (Max - Min)) * ((90 - 0) + 0) #}
+          {%- set solar_angle = ((states('sensor.solar_angle') | float(0) - (-6)) / (90 - (-6))) * ((90 - 0) + 0) -%}
+          {%- set solar_lux = 120000 * max(0, sin(solar_angle * pi / 180)) -%}
+          {%- set solar_lux_pct = (solar_lux * states('sensor.sunlight_pct') | float(0) / 100) -%}
+          {%- set twighlight_coef = 1 if states('sensor.solar_angle') | float(0) > 0 else 10 -%}
+          {%- set season_coef = 1.5 if states('sensor.season') == 'winter' else 1 if states('sensor.season') == 'summer' else 1.25 -%}
+          {{ max(0, solar_lux_pct / twighlight_coef / season_coef) | round(0) }}
+        availability_template: >-
+          {{ 
+             states('sensor.solar_angle') | is_number and
+             states('sensor.sunlight_pct') | is_number
+          }}
+        unit_of_measurement: "lx"
+        device_class: 'illuminance'
+        unique_id: solar_lux
+
+  # Sunlight Illuminance Percent
+  - platform: template
+    sensors:
+      sunlight_pct:
+        friendly_name: 'Солнце (яркость)'
+        icon_template: mdi:white-balance-sunny
+        value_template: >-
+          {%- set elevation = state_attr('sun.sun','elevation') | float(0) %}
+          {%- set cloud_coverage = states('sensor.cloud_coverage') | float(0) %}
+          {%- set cloud_factor = (1 - (0.75 * ( cloud_coverage / 100) ** 3 )) %}
+          {%- set min_elevation = -6 %} {# set this to official sun elevation for end of twighlight #}
+          {%- set max_elevation = 75 %} {# set this to the maximum noon sun elevation (minimum is 15 degrees) +10 (optional) find at https://www.suncalc.org/ #}
+          {%- set adjusted_elevation = elevation - min_elevation %}
+          {%- set adjusted_elevation = [adjusted_elevation, 0] | max %}
+          {%- set adjusted_elevation = [adjusted_elevation, max_elevation - min_elevation] | min %}
+          {%- set adjusted_elevation = adjusted_elevation / (max_elevation - min_elevation) %}
+          {%- set adjusted_elevation = adjusted_elevation %}
+          {%- set adjusted_elevation = adjusted_elevation * 100 %}
+          {%- set brightness = adjusted_elevation * cloud_factor %}
+          {{ brightness | round }}
+        availability_template: >-
+          {{ 
+             states('sun.sun') not in ['unknown', 'unavailable'] and
+             states('sensor.cloud_coverage') | is_number
+          }}
+        unit_of_measurement: '%'
+        device_class: 'illuminance'
+        unique_id: sunlight_pct
+
+  # Cloud Coverage
+      cloud_coverage:
+        friendly_name: "Cloud coverage"
+        unit_of_measurement: "%"
+        value_template: >-
+          {%- set coverage = { 'Clear': 0, 'Partly Cloudy': 50, 'Mostly Cloudy': 75, 'Cloudy': 100 } -%}
+          {%- set current_coverage = states('sensor.weather_com_cloud_cover_phrase') %}
+          {%- set weather_com_cloud_coverage = coverage[current_coverage] if current_coverage in coverage else '-' %}
+
+          {%- if weather_com_cloud_coverage | is_number and
+                 states('sensor.accuweather_cloud_cover') | is_number -%}
+            {{ average([weather_com_cloud_coverage | int(0), states('sensor.accuweather_cloud_cover') | int(0)]) | round(0) }}
+          {%- elif weather_com_cloud_coverage | is_number -%}
+            {{ weather_com_cloud_coverage }}
+          {%- elif states('sensor.accuweather_cloud_cover') | is_number -%}
+            {{ states('sensor.accuweather_cloud_cover') }}
+          {%- else -%}
+            0
+          {%- endif -%}
+        icon_template: >-
+          {% if states('sensor.cloud_coverage') | int(0) == 100 %}
+            mdi:cloud-outline
+          {% elif states('sensor.cloud_coverage') | int(0) == 0 %}
+            mdi:weather-sunny
+          {% else %}
+            mdi:weather-partly-cloudy
+          {% endif %}
+        unique_id: cloud_coverage
+
+  # Current Zodiac
+  - platform: template
+    sensors:
+      current_zodiac:
+        friendly_name: 'Знак зодиака'
+        value_template: >-
+          {%- set state = states('sensor.zodiac') -%}
+          {% if state == 'aquarius' %} Водолея
+          {% elif state == 'aries' %} Овна
+          {% elif state == 'cancer' %} Рака
+          {% elif state == 'capricorn' %} Козерога
+          {% elif state == 'gemini' %} Близнецов
+          {% elif state == 'leo' %} Льва
+          {% elif state == 'libra' %} Весов
+          {% elif state == 'pisces' %} Рыб
+          {% elif state == 'sagittarius' %} Стрельца
+          {% elif state == 'scorpio' %} Скорпиона
+          {% elif state == 'taurus' %} Тельца
+          {% elif state == 'virgo' %} Девы
+          {% else %}
+          {% endif %}
+        icon_template: >-
+          {{ state_attr('sensor.zodiac','icon') }}
+        unique_id: current_zodiac
+
+  # Season
+#  - platform: season
+#    type: meteorological
+
+  # Current Season 
+  - platform: template
+    sensors:
+      current_season:
+        friendly_name: 'Сезон'
+        value_template: >-
+          {%- set state = states('sensor.season') -%}
+          {% if state == 'summer' %} Лета
+          {% elif state == 'autumn' %} Осени
+          {% elif state == 'winter' %} Зимы
+          {% elif state == 'spring' %} Весны
+          {% else %}
+          {% endif %}
+        icon_template: >-
+          {{ state_attr('sensor.season','icon') }}
+        unique_id: current_season
+
+input_text:
+  zodiac_state:
+    name: "Знак зодиака"
+    icon: mdi:moon-new
+
+  season_state:
+    name: "Сезон"
+    icon: mdi:earth
